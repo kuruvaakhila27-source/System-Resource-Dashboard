@@ -3,6 +3,7 @@ import psutil
 import pandas as pd
 import plotly.graph_objects as go
 import time
+import os
 from datetime import datetime
 
 # =========================================================
@@ -19,9 +20,10 @@ st.set_page_config(
 # CONSTANTS
 # =========================================================
 
-CPU_WARNING = 80
-RAM_WARNING = 80
-DISK_WARNING = 90
+DEFAULT_CPU_WARNING = 80
+DEFAULT_RAM_WARNING = 80
+DEFAULT_DISK_WARNING = 90
+
 
 # =========================================================
 # SESSION STATE
@@ -30,48 +32,131 @@ DISK_WARNING = 90
 if "history" not in st.session_state:
     st.session_state.history = []
 
-if "last_update" not in st.session_state:
-    st.session_state.last_update = None
+if "previous_network" not in st.session_state:
+    st.session_state.previous_network = None
+
+if "previous_network_time" not in st.session_state:
+    st.session_state.previous_network_time = None
 
 
 # =========================================================
-# CROSS-PLATFORM DISK PATH
+# SAFE DISK PATH
 # =========================================================
 
 def get_disk_path():
-    """
-    Returns a disk path that works on both
-    Windows and Linux/macOS.
-    """
 
-    if hasattr(psutil, "disk_partitions"):
+    # Windows
+    if os.name == "nt":
+
+        path = os.environ.get(
+            "SystemDrive",
+            "C:"
+        )
+
+        if os.path.exists(path):
+            return path
+
+        return "C:"
+
+    # Linux / Streamlit Cloud / macOS
+    return "/"
+
+
+# =========================================================
+# SAFE DISK USAGE
+# =========================================================
+
+def get_disk_usage():
+
+    possible_paths = []
+
+    if os.name == "nt":
+
+        system_drive = os.environ.get(
+            "SystemDrive",
+            "C:"
+        )
+
+        possible_paths.append(
+            system_drive
+        )
+
+    possible_paths.append("/")
+
+    for path in possible_paths:
 
         try:
-            partitions = psutil.disk_partitions(
-                all=False
-            )
 
-            for partition in partitions:
+            if os.path.exists(path):
 
-                try:
-                    usage = psutil.disk_usage(
-                        partition.mountpoint
-                    )
+                return (
+                    psutil.disk_usage(path),
+                    path
+                )
 
-                    return partition.mountpoint
+        except (
+            FileNotFoundError,
+            PermissionError,
+            OSError
+        ):
+            continue
 
-                except (
-                    PermissionError,
-                    FileNotFoundError,
-                    OSError
-                ):
-                    continue
+    return None, "Unavailable"
 
-        except Exception:
-            pass
 
-    # Linux / Streamlit Cloud fallback
-    return "/"
+# =========================================================
+# SAFE BATTERY
+# =========================================================
+
+def get_battery():
+
+    try:
+
+        battery = psutil.sensors_battery()
+
+        if battery is None:
+            return None
+
+        return {
+            "percent": battery.percent,
+            "charging": battery.power_plugged
+        }
+
+    except (
+        FileNotFoundError,
+        PermissionError,
+        OSError,
+        AttributeError
+    ):
+
+        return None
+
+
+# =========================================================
+# SAFE NETWORK
+# =========================================================
+
+def get_network():
+
+    try:
+
+        network = psutil.net_io_counters()
+
+        if network is None:
+            return None
+
+        return {
+            "sent": network.bytes_sent,
+            "received": network.bytes_recv
+        }
+
+    except (
+        FileNotFoundError,
+        PermissionError,
+        OSError
+    ):
+
+        return None
 
 
 # =========================================================
@@ -80,53 +165,79 @@ def get_disk_path():
 
 def get_system_info():
 
-    cpu = psutil.cpu_percent(
-        interval=0.5
-    )
-
-    memory = psutil.virtual_memory()
-
-    disk_path = get_disk_path()
-
+    # CPU
     try:
 
-        disk = psutil.disk_usage(
-            disk_path
+        cpu = psutil.cpu_percent(
+            interval=0.3
         )
 
-    except (
-        FileNotFoundError,
-        PermissionError,
-        OSError
-    ):
+    except Exception:
 
-        disk = psutil.disk_usage("/")
+        cpu = 0
 
-    network = psutil.net_io_counters()
 
-    battery = psutil.sensors_battery()
+    # RAM
+    try:
+
+        memory = psutil.virtual_memory()
+
+        ram_percent = memory.percent
+        ram_used = memory.used / (
+            1024 ** 3
+        )
+        ram_total = memory.total / (
+            1024 ** 3
+        )
+
+    except Exception:
+
+        ram_percent = 0
+        ram_used = 0
+        ram_total = 0
+
+
+    # Disk
+    disk, disk_path = get_disk_usage()
+
+    if disk is not None:
+
+        disk_percent = disk.percent
+
+        disk_used = disk.used / (
+            1024 ** 3
+        )
+
+        disk_total = disk.total / (
+            1024 ** 3
+        )
+
+    else:
+
+        disk_percent = 0
+        disk_used = 0
+        disk_total = 0
+
+
+    # Network
+    network = get_network()
+
+
+    # Battery
+    battery = get_battery()
+
 
     return {
         "cpu": cpu,
-        "ram": memory.percent,
-        "ram_used": memory.used / (1024 ** 3),
-        "ram_total": memory.total / (1024 ** 3),
-        "disk": disk.percent,
-        "disk_used": disk.used / (1024 ** 3),
-        "disk_total": disk.total / (1024 ** 3),
+        "ram": ram_percent,
+        "ram_used": ram_used,
+        "ram_total": ram_total,
+        "disk": disk_percent,
+        "disk_used": disk_used,
+        "disk_total": disk_total,
         "disk_path": disk_path,
-        "upload": network.bytes_sent,
-        "download": network.bytes_recv,
-        "battery": (
-            battery.percent
-            if battery
-            else None
-        ),
-        "charging": (
-            battery.power_plugged
-            if battery
-            else None
-        )
+        "network": network,
+        "battery": battery
     }
 
 
@@ -134,25 +245,76 @@ def get_system_info():
 # NETWORK SPEED
 # =========================================================
 
-def get_network_speed():
+def calculate_network_speed():
 
-    first = psutil.net_io_counters()
+    current = get_network()
 
-    time.sleep(0.5)
+    if current is None:
+        return 0, 0
 
-    second = psutil.net_io_counters()
+    current_time = time.time()
 
-    upload_speed = (
-        second.bytes_sent
-        - first.bytes_sent
-    ) / 0.5
+    previous = (
+        st.session_state.previous_network
+    )
 
-    download_speed = (
-        second.bytes_recv
-        - first.bytes_recv
-    ) / 0.5
+    previous_time = (
+        st.session_state.previous_network_time
+    )
 
-    return upload_speed, download_speed
+    st.session_state.previous_network = current
+
+    st.session_state.previous_network_time = (
+        current_time
+    )
+
+    if previous is None or previous_time is None:
+
+        return 0, 0
+
+    elapsed = current_time - previous_time
+
+    if elapsed <= 0:
+        return 0, 0
+
+    upload = (
+        current["sent"]
+        - previous["sent"]
+    ) / elapsed
+
+    download = (
+        current["received"]
+        - previous["received"]
+    ) / elapsed
+
+    return upload, download
+
+
+# =========================================================
+# BYTE FORMATTER
+# =========================================================
+
+def format_speed(value):
+
+    if value < 1024:
+
+        return f"{value:.0f} B/s"
+
+    if value < 1024 ** 2:
+
+        return (
+            f"{value / 1024:.2f} KB/s"
+        )
+
+    if value < 1024 ** 3:
+
+        return (
+            f"{value / (1024 ** 2):.2f} MB/s"
+        )
+
+    return (
+        f"{value / (1024 ** 3):.2f} GB/s"
+    )
 
 
 # =========================================================
@@ -161,48 +323,73 @@ def get_network_speed():
 
 def get_processes():
 
-    processes = []
+    rows = []
 
-    for process in psutil.process_iter(
-        [
-            "pid",
-            "name",
-            "cpu_percent",
-            "memory_percent"
-        ]
-    ):
+    try:
 
-        try:
+        processes = psutil.process_iter(
+            [
+                "pid",
+                "name",
+                "cpu_percent",
+                "memory_percent"
+            ]
+        )
 
-            info = process.info
+        for process in processes:
 
-            processes.append(
-                {
-                    "PID": info["pid"],
-                    "Process": info["name"],
-                    "CPU %": info[
-                        "cpu_percent"
-                    ],
-                    "Memory %": round(
-                        info[
-                            "memory_percent"
-                        ],
-                        2
-                    )
-                }
-            )
+            try:
 
-        except (
-            psutil.NoSuchProcess,
-            psutil.AccessDenied,
-            psutil.ZombieProcess
-        ):
+                info = process.info
 
-            continue
+                rows.append(
+                    {
+                        "PID": info.get(
+                            "pid",
+                            "N/A"
+                        ),
+                        "Process": info.get(
+                            "name",
+                            "Unknown"
+                        ),
+                        "CPU %": round(
+                            info.get(
+                                "cpu_percent",
+                                0
+                            ) or 0,
+                            2
+                        ),
+                        "Memory %": round(
+                            info.get(
+                                "memory_percent",
+                                0
+                            ) or 0,
+                            2
+                        )
+                    }
+                )
 
-    df = pd.DataFrame(
-        processes
-    )
+            except (
+                psutil.NoSuchProcess,
+                psutil.AccessDenied,
+                psutil.ZombieProcess
+            ):
+
+                continue
+
+    except Exception:
+
+        return pd.DataFrame(
+            columns=[
+                "PID",
+                "Process",
+                "CPU %",
+                "Memory %"
+            ]
+        )
+
+
+    df = pd.DataFrame(rows)
 
     if not df.empty:
 
@@ -212,35 +399,6 @@ def get_processes():
         )
 
     return df
-
-
-# =========================================================
-# BYTE FORMATTER
-# =========================================================
-
-def format_bytes(value):
-
-    if value < 1024:
-
-        return f"{value:.0f} B/s"
-
-    elif value < 1024 ** 2:
-
-        return (
-            f"{value / 1024:.2f} KB/s"
-        )
-
-    elif value < 1024 ** 3:
-
-        return (
-            f"{value / (1024 ** 2):.2f} MB/s"
-        )
-
-    else:
-
-        return (
-            f"{value / (1024 ** 3):.2f} GB/s"
-        )
 
 
 # =========================================================
@@ -268,8 +426,8 @@ with st.sidebar:
     )
 
     refresh_rate = st.slider(
-        "🔄 Refresh interval",
-        min_value=1,
+        "🔄 Refresh Interval",
+        min_value=2,
         max_value=10,
         value=3
     )
@@ -281,24 +439,24 @@ with st.sidebar:
     )
 
     cpu_threshold = st.slider(
-        "CPU warning (%)",
+        "CPU Warning (%)",
         min_value=50,
         max_value=100,
-        value=CPU_WARNING
+        value=DEFAULT_CPU_WARNING
     )
 
     ram_threshold = st.slider(
-        "RAM warning (%)",
+        "RAM Warning (%)",
         min_value=50,
         max_value=100,
-        value=RAM_WARNING
+        value=DEFAULT_RAM_WARNING
     )
 
     disk_threshold = st.slider(
-        "Disk warning (%)",
+        "Disk Warning (%)",
         min_value=50,
         max_value=100,
-        value=DISK_WARNING
+        value=DEFAULT_DISK_WARNING
     )
 
     st.divider()
@@ -311,7 +469,7 @@ with st.sidebar:
         st.session_state.history = []
 
         st.success(
-            "History cleared."
+            "Monitoring history cleared."
         )
 
         st.rerun()
@@ -324,30 +482,38 @@ with st.sidebar:
 system = get_system_info()
 
 upload_speed, download_speed = (
-    get_network_speed()
+    calculate_network_speed()
 )
 
-now = datetime.now()
-
+current_time = datetime.now()
 
 # =========================================================
-# SAVE HISTORY
+# HISTORY
 # =========================================================
 
-history_entry = {
-    "Time": now.strftime(
+history_record = {
+    "Time": current_time.strftime(
         "%H:%M:%S"
     ),
-    "CPU": system["cpu"],
-    "RAM": system["ram"],
-    "Disk": system["disk"]
+    "CPU": round(
+        system["cpu"],
+        2
+    ),
+    "RAM": round(
+        system["ram"],
+        2
+    ),
+    "Disk": round(
+        system["disk"],
+        2
+    )
 }
 
 st.session_state.history.append(
-    history_entry
+    history_record
 )
 
-# Keep last 100 records
+# Keep latest 100 records
 
 if len(
     st.session_state.history
@@ -357,17 +523,15 @@ if len(
         st.session_state.history[-100:]
     )
 
-st.session_state.last_update = now
-
 
 # =========================================================
 # TOP METRICS
 # =========================================================
 
-c1, c2, c3, c4 = st.columns(4)
+col1, col2, col3, col4 = st.columns(4)
 
 
-with c1:
+with col1:
 
     st.metric(
         "🧠 CPU Usage",
@@ -375,7 +539,7 @@ with c1:
     )
 
 
-with c2:
+with col2:
 
     st.metric(
         "💾 RAM Usage",
@@ -383,7 +547,7 @@ with c2:
     )
 
 
-with c3:
+with col3:
 
     st.metric(
         "💽 Disk Usage",
@@ -391,21 +555,23 @@ with c3:
     )
 
 
-with c4:
+with col4:
 
-    if system["battery"] is not None:
+    battery = system["battery"]
 
-        battery_text = (
-            f"{system['battery']:.0f}%"
+    if battery is not None:
+
+        battery_value = (
+            f"{battery['percent']:.0f}%"
         )
 
-        if system["charging"]:
+        if battery["charging"]:
 
-            battery_text += " ⚡"
+            battery_value += " ⚡"
 
         st.metric(
             "🔋 Battery",
-            battery_text
+            battery_value
         )
 
     else:
@@ -427,6 +593,7 @@ st.subheader(
 )
 
 alerts = []
+
 
 if system["cpu"] >= cpu_threshold:
 
@@ -461,8 +628,8 @@ if alerts:
 else:
 
     st.success(
-        "✅ System resources are "
-        "within normal limits."
+        "✅ All monitored resources "
+        "are within normal limits."
     )
 
 
@@ -476,12 +643,17 @@ st.subheader(
     "📊 Resource Details"
 )
 
-r1, r2, r3 = st.columns(3)
+resource1, resource2, resource3 = (
+    st.columns(3)
+)
 
 
-with r1:
+# CPU
+with resource1:
 
-    st.write("### 🧠 CPU")
+    st.write(
+        "### 🧠 CPU"
+    )
 
     st.progress(
         min(
@@ -491,19 +663,28 @@ with r1:
     )
 
     st.write(
-        f"Current usage: "
-        f"**{system['cpu']:.1f}%**"
+        f"Usage: **{system['cpu']:.1f}%**"
     )
+
+    try:
+
+        cpu_count = psutil.cpu_count()
+
+    except Exception:
+
+        cpu_count = "N/A"
 
     st.write(
-        f"Logical CPUs: "
-        f"**{psutil.cpu_count()}**"
+        f"Logical CPUs: **{cpu_count}**"
     )
 
 
-with r2:
+# RAM
+with resource2:
 
-    st.write("### 💾 Memory")
+    st.write(
+        "### 💾 Memory"
+    )
 
     st.progress(
         min(
@@ -513,19 +694,20 @@ with r2:
     )
 
     st.write(
-        f"Used: "
-        f"**{system['ram_used']:.2f} GB**"
+        f"Used: **{system['ram_used']:.2f} GB**"
     )
 
     st.write(
-        f"Total: "
-        f"**{system['ram_total']:.2f} GB**"
+        f"Total: **{system['ram_total']:.2f} GB**"
     )
 
 
-with r3:
+# Disk
+with resource3:
 
-    st.write("### 💽 Disk")
+    st.write(
+        "### 💽 Disk"
+    )
 
     st.progress(
         min(
@@ -535,17 +717,15 @@ with r3:
     )
 
     st.write(
-        f"Used: "
-        f"**{system['disk_used']:.2f} GB**"
+        f"Used: **{system['disk_used']:.2f} GB**"
     )
 
     st.write(
-        f"Total: "
-        f"**{system['disk_total']:.2f} GB**"
+        f"Total: **{system['disk_total']:.2f} GB**"
     )
 
     st.caption(
-        f"Monitoring: `{system['disk_path']}`"
+        f"Drive: `{system['disk_path']}`"
     )
 
 
@@ -559,24 +739,24 @@ st.subheader(
     "🌐 Network Activity"
 )
 
-n1, n2 = st.columns(2)
+network1, network2 = st.columns(2)
 
 
-with n1:
+with network1:
 
     st.metric(
         "⬆️ Upload Speed",
-        format_bytes(
+        format_speed(
             upload_speed
         )
     )
 
 
-with n2:
+with network2:
 
     st.metric(
         "⬇️ Download Speed",
-        format_bytes(
+        format_speed(
             download_speed
         )
     )
@@ -600,6 +780,7 @@ if st.session_state.history:
 
     fig = go.Figure()
 
+
     fig.add_trace(
         go.Scatter(
             x=history_df["Time"],
@@ -608,6 +789,7 @@ if st.session_state.history:
             name="CPU %"
         )
     )
+
 
     fig.add_trace(
         go.Scatter(
@@ -618,6 +800,7 @@ if st.session_state.history:
         )
     )
 
+
     fig.add_trace(
         go.Scatter(
             x=history_df["Time"],
@@ -627,6 +810,7 @@ if st.session_state.history:
         )
     )
 
+
     fig.update_layout(
         xaxis_title="Time",
         yaxis_title="Usage (%)",
@@ -635,6 +819,7 @@ if st.session_state.history:
         ),
         height=450
     )
+
 
     st.plotly_chart(
         fig,
@@ -665,7 +850,8 @@ if not process_df.empty:
 else:
 
     st.info(
-        "Unable to retrieve running processes."
+        "Process information is unavailable "
+        "on this environment."
     )
 
 
@@ -691,9 +877,11 @@ if st.session_state.history:
         hide_index=True
     )
 
+
     csv_data = history_df.to_csv(
         index=False
     )
+
 
     st.download_button(
         "⬇️ Download System History",
@@ -719,26 +907,58 @@ else:
 st.divider()
 
 st.subheader(
-    "💡 About This Dashboard"
+    "💡 How This Project Works"
 )
 
 st.markdown(
     """
-    This dashboard monitors system resources in real time
-    using the Python `psutil` library.
+    ### 1️⃣ System Data Collection
 
-    **Monitored resources:**
+    The application uses Python's `psutil` library
+    to collect system resource information.
 
-    - 🧠 CPU utilization
-    - 💾 RAM utilization
-    - 💽 Disk utilization
+    ### 2️⃣ Resource Monitoring
+
+    The dashboard monitors:
+
+    - 🧠 CPU usage
+    - 💾 RAM usage
+    - 💽 Disk usage
     - 🌐 Network activity
     - 🔋 Battery status
     - ⚙️ Running processes
 
-    The application also provides configurable alerts,
-    interactive charts, monitoring history and CSV export.
+    ### 3️⃣ Alerts
+
+    Configurable thresholds detect high CPU,
+    RAM and disk utilization.
+
+    ### 4️⃣ Visualization
+
+    Resource usage is displayed using interactive
+    Plotly charts.
+
+    ### 5️⃣ History
+
+    Recent monitoring readings are stored in the
+    current application session.
+
+    ### 6️⃣ Export
+
+    Monitoring history can be downloaded as CSV.
     """
+)
+
+
+# =========================================================
+# PLATFORM NOTE
+# =========================================================
+
+st.info(
+    "💡 When deployed on Streamlit Cloud, the dashboard "
+    "monitors the cloud server rather than your personal PC. "
+    "Battery information may show N/A because cloud servers "
+    "normally do not expose a physical battery."
 )
 
 
