@@ -2,21 +2,25 @@
 
 A real-time system monitoring dashboard built with Python and Streamlit.
 
-## 🚀 Features
+## 🚀 Live Demo
+
+https://system-resource-dashboard-mgf96seg2bznuufpjtq8hi.streamlit.app/
+
+## ✨ Features
 
 - 🧠 Real-time CPU monitoring
 - 💾 RAM usage monitoring
 - 💽 Disk usage monitoring
-- 🌐 Network upload/download speed
+- 🌐 Network activity monitoring
 - 🔋 Battery status
 - ⚙️ Running process monitoring
-- 📈 Live CPU, RAM and Disk charts
-- 🚨 Configurable resource alerts
+- 🚨 CPU, RAM and disk alerts
+- 📈 Interactive resource usage charts
 - 🕒 Monitoring history
 - 📥 CSV export
-- 🔄 Automatic dashboard refresh
+- ☁️ Streamlit Cloud deployment
 
-## 🛠️ Technologies
+## 🛠️ Technologies Used
 
 - Python
 - Streamlit
@@ -24,22 +28,30 @@ A real-time system monitoring dashboard built with Python and Streamlit.
 - Pandas
 - Plotly
 
-## ▶️ Run Locally
+## ⚙️ Run Locally
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 📊 Monitored Resources
-Resource	Information
-CPU	Current CPU utilization
-RAM	Memory usage and capacity
-Disk	Disk utilization and capacity
-Network	Upload and download speed
-Battery	Battery percentage and charging status
-Processes	CPU and memory usage
+Resource	Monitoring
+🧠 CPU	CPU utilization
+💾 RAM	Memory usage
+💽 Disk	Disk utilization
+🌐 Network	Upload and download activity
+🔋 Battery	Battery percentage and charging status
+⚙️ Processes	Running process CPU and memory usage
 
 
 🚨 Alerts
-The dashboard warns when CPU, RAM, or disk usage exceeds the configured threshold.
+The dashboard provides configurable warnings when:
+- CPU usage becomes high
+- RAM usage becomes high
+- Disk usage becomes high
 📈 Dashboard
-The application provides real-time metrics, interactive charts, running process information, monitoring history, and CSV export.
+The application provides real-time metrics, interactive charts, monitoring history, running process information and CSV export.
+☁️ Deployment
+Deployed using Streamlit Community Cloud.
+
+Built with Python + Streamlit.
+
